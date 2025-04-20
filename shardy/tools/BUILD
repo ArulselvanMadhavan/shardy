@@ -2,6 +2,35 @@
 
 package(default_visibility = ["//visibility:public"])
 
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    targets = {
+         #"//shardy/tools:sdy_opt": "",
+         "//shardy/tools:sdy_example": "",
+    },
+)
+
+cc_binary(
+    name = "sdy_example",
+    srcs = ["sdy_example.cc"],
+    deps = [
+        "//shardy/dialect/sdy/ir:register",
+        "//shardy/dialect/sdy/transforms:passes",
+        "//shardy/round_trip_import:import_callback_custom_calls",
+        "//shardy/round_trip_import:import_sdy_custom_calls",
+        "//shardy/round_trip_import:import_shardy_attrs",
+        "//shardy/round_trip_import:import_uninlineable_func_calls",
+        "//shardy/round_trip_import:pipelines",
+        "//shardy/round_trip_import:shard_map_import",
+        "@llvm-project//mlir:AllPassesAndDialects",
+        "@llvm-project//mlir:FuncExtensions",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MlirOptLib",
+        "@llvm-project//mlir:QuantOps",
+    ],
+)
 cc_binary(
     name = "sdy_opt",
     srcs = ["sdy_opt_main.cc"],
