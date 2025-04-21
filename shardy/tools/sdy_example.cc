@@ -4,21 +4,19 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/register.h"
-#include "shardy/dialect/sdy/ir/utils.h"
-#include "shardy/dialect/sdy/transforms/export/explicit_reshards_util.h"
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <sstream>
-#include <tuple>
 #include <utility>
 #include <vector>
 
 auto opPrint(mlir::Operation *moduleOp) {
   auto pflags = mlir::OpPrintingFlags();
-  pflags.enableDebugInfo(true, false);
+  pflags.enableDebugInfo(true, true);
   moduleOp->print(llvm::outs(), pflags);
+  llvm::outs().flush();
 }
 
 auto mkLoc(mlir::MLIRContext *ctx, int line) {
@@ -66,48 +64,53 @@ mlir::sdy::TensorShardingAttr createTensorSharding(
                                             replicatedAxes);
 }
 
+auto toBF16(llvm::APFloat &value) {
+  bool ignored;
+  value.convert(llvm::APFloat::BFloat(), llvm::APFloat::rmNearestTiesToEven,
+                &ignored);
+}
+
 auto mkTensor(mlir::ArrayRef<int64_t> shape, mlir::Type ty) {
   auto tty = mlir::RankedTensorType::get(shape, ty);
-  auto size = tty.getNumElements();
-  std::vector<llvm::APFloat> buffer;
-  buffer.reserve(size);
-  std::fill(buffer.begin(), buffer.end(), llvm::APFloat(0.f));
-  return std::pair(tty, buffer);
+  // auto size = tty.getNumElements();
+  // std::vector<llvm::APFloat> buffer;
+  // float data[3] = {0.3f, 0.6f, 0.9f};
+  // for (auto i = 0; i < size; i++) {
+  //     auto value = (data[i % 3]);
+  //     buffer.push_back(llvm::APFloat(value));
+  //     toBF16(buffer.back());
+  // }
+  // return std::pair(tty, buffer);
+  return tty;
 }
 
 auto matmulFunc(
     mlir::Builder *builder, llvm::StringRef meshName,
-    std::array<std::pair<mlir::RankedTensorType, std::vector<llvm::APFloat>>, 2>
+    std::array<mlir::RankedTensorType, 2>
         ins,
     mlir::sdy::MeshAttr mesh) {
   auto ctx = builder->getContext();
   auto location = mkLoc(ctx, __LINE__);
-  auto func_name = "matmul";
-  auto sym_name = builder->getStringAttr(func_name);
-  auto sym_attr = builder->getNamedAttr(llvm::StringRef("sym_name"), sym_name);
   auto sharding = createTensorSharding(builder, meshName, {});
   std::vector<mlir::Type> itypes;
   itypes.reserve(ins.size());
-  std::vector<mlir::NamedAttribute> arg_attrs;
-  arg_attrs.reserve(ins.size());
+  std::vector<mlir::DictionaryAttr> argAttrs;
+  argAttrs.reserve(ins.size());
   auto i = 0;
-  for (auto [tty, ten] : ins) {
+  for (auto tty : ins) {
     auto shardedTensor = sharding.getLocalTensorType(tty, mesh);
-    auto dea = mlir::DenseElementsAttr::get(shardedTensor, ten);
+    // shardedTensor.getShape()
+    // auto dea = mlir::DenseElementsAttr::get(, ten);
     std::stringstream ss;
     ss << "arg" << i;
-    auto nattr = builder->getNamedAttr(llvm::StringRef(ss.str()), dea);
+    argAttrs.push_back(builder->getDictionaryAttr(builder->getNamedAttr(ss.str(), sharding)));
     itypes.push_back(shardedTensor);
-    arg_attrs.push_back(nattr);
     i += 1;
   }
 
-  auto dattr = builder->getDictionaryAttr(arg_attrs);
   auto type = builder->getFunctionType(mlir::ArrayRef(itypes), {});
-  auto arg_dattrs = builder->getNamedAttr("arg_attrs", dattr);
-  auto attrs1 = {sym_attr, arg_dattrs};
-  auto attrs = mlir::ArrayRef<mlir::NamedAttribute>(attrs1);
-  auto funcOp = mlir::func::FuncOp::create(location, func_name, type, attrs);
+  auto funcOp = mlir::func::FuncOp::create(location, "matmul", type);
+  funcOp.setAllArgAttrs(argAttrs);
   return funcOp;
 }
 
