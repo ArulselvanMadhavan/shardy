@@ -84,14 +84,14 @@ auto mkTensor(mlir::ArrayRef<int64_t> shape, mlir::Type ty) {
   return tty;
 }
 
-auto matmulFunc(
-    mlir::Builder *builder, llvm::StringRef meshName,
-    std::array<mlir::RankedTensorType, 2>
-        ins,
-    mlir::sdy::MeshAttr mesh) {
+auto matmulFunc(mlir::Builder *builder, llvm::StringRef meshName,
+                std::array<mlir::RankedTensorType, 2> ins,
+                mlir::sdy::MeshAttr mesh) {
   auto ctx = builder->getContext();
   auto location = mkLoc(ctx, __LINE__);
-  auto sharding = createTensorSharding(builder, meshName, {});
+  auto dimShardings = {createDimSharding(builder,{createAxis(builder,"x")}),
+      createDimSharding(builder,{})};
+  auto sharding = createTensorSharding(builder, meshName, dimShardings);
   std::vector<mlir::Type> itypes;
   itypes.reserve(ins.size());
   std::vector<mlir::DictionaryAttr> argAttrs;
@@ -99,11 +99,10 @@ auto matmulFunc(
   auto i = 0;
   for (auto tty : ins) {
     auto shardedTensor = sharding.getLocalTensorType(tty, mesh);
-    // shardedTensor.getShape()
-    // auto dea = mlir::DenseElementsAttr::get(, ten);
     std::stringstream ss;
     ss << "arg" << i;
-    argAttrs.push_back(builder->getDictionaryAttr(builder->getNamedAttr(ss.str(), sharding)));
+    argAttrs.push_back(
+        builder->getDictionaryAttr(builder->getNamedAttr(ss.str(), sharding)));
     itypes.push_back(shardedTensor);
     i += 1;
   }
