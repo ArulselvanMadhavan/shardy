@@ -467,6 +467,7 @@ the body on any free axes - those not in the manual_axes list.
 - Elements in `in_shardings` and `out_shardings` must satisfy the constraints listed in `TensorShardingAttr`.
 - The number of global and local tensor inputs/outputs of the op region must match.
 - The manual axes must come before any free axes in each dim sharding.
+- The manual axes cannot introduce padding. Namely, the dimension size must be divisible by the corresponding manual axes size.
 - The global and local shapes of the op regions arguments/results must match.
 - No manual axes are split.
 
@@ -1065,11 +1066,10 @@ one dimensions that correspond across operands and results.
 not allowed to be propagated. It is orthogonal to the factor types. Namely,
 a blocked-propagation factor can be any of the factor types.
 
-`is_custom_rule` describes whether this is a rule defined by a user for a
-`stablehlo.custom_call` op. The partitioner doesn't know how to partition
-these ops, so a user must tell it how. When it is a custom rule, then the
-rule is always preserved/never removed. `is_custom_rule` can only be true
-for `stablehlo.custom_call` ops.
+`is_custom_rule` describes whether this is a rule defined by a user. Users
+can define sharding rules for their custom calls or overwrite the
+pre-defined sharding rules for the standard operations. A custom rule is
+always preserved/never removed.
 
 **Constraints:**
 - Number of operand/result mappings must match the number of

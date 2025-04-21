@@ -942,11 +942,10 @@ def Sdy_OpShardingRule : AttrDef<Sdy_Dialect, "OpShardingRule"> {
     not allowed to be propagated. It is orthogonal to the factor types. Namely,
     a blocked-propagation factor can be any of the factor types.
 
-    `is_custom_rule` describes whether this is a rule defined by a user for a
-    `stablehlo.custom_call` op. The partitioner doesn't know how to partition
-    these ops, so a user must tell it how. When it is a custom rule, then the
-    rule is always preserved/never removed. `is_custom_rule` can only be true
-    for `stablehlo.custom_call` ops.
+    `is_custom_rule` describes whether this is a rule defined by a user. Users
+    can define sharding rules for their custom calls or overwrite the
+    pre-defined sharding rules for the standard operations. A custom rule is
+    always preserved/never removed.
 
     **Constraints:**
     - Number of operand/result mappings must match the number of
@@ -1079,8 +1078,8 @@ def Sdy_AxisRefList : ArrayOfAttr<Sdy_Dialect, "AxisRefList",
 }
 
 def Sdy_EmptyAxisList: AttrConstraint<
-    CPred<"$_self.isa<AxisRefListAttr>() && "
-          "$_self.cast<AxisRefListAttr>().empty()">,
+    CPred<"mlir::isa<AxisRefListAttr>($_self) && "
+          "mlir::cast<AxisRefListAttr>($_self).empty()">,
     "axis list is empty">;
 
 def Sdy_ListOfAxisRefLists : ArrayOfAttr<Sdy_Dialect, "ListOfAxisRefLists",
@@ -1089,8 +1088,8 @@ def Sdy_ListOfAxisRefLists : ArrayOfAttr<Sdy_Dialect, "ListOfAxisRefLists",
 }
 
 def Sdy_EmptyAxesPerDim : AttrConstraint<
-    CPred<"$_self.isa<ListOfAxisRefListsAttr>() && "
-          "llvm::all_of($_self.cast<ListOfAxisRefListsAttr>(),"
+    CPred<"mlir::isa<ListOfAxisRefListsAttr>($_self) && "
+          "llvm::all_of(mlir::cast<ListOfAxisRefListsAttr>($_self),"
           "               [](const AxisRefListAttr& al) { return al.size() == 0; })">,
     "is empty axes-per-dim">;
 

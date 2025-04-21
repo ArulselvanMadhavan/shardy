@@ -579,17 +579,10 @@ LogicalResult indicesSortedUniqueInBound(Operation* op, int64_t numFactors,
 
 // Verifies the following for an `OpShardingRuleAttr`:
 //
-// - If the rule is custom, the operation the rule is attached to is a
-//   `CustomCallOp`.
 // - All defined factor sizes are used by at least one operand/result mapping.
 // - All operand/result mappings are valid (see `verifyShardingRuleMapping`).
 LogicalResult verifyOpShardingRuleAttr(OpShardingRuleAttr shardingRule,
                                        Operation* op) {
-  if (shardingRule.isCustom() && !isa<stablehlo::CustomCallOp>(op)) {
-    return op->emitOpError(
-        "can only define custom sharding rules on stablehlo.custom_call");
-  }
-
   BitVector seenFactorIndices(shardingRule.getNumFactors());
   ArrayRef<int64_t> factorSizes = shardingRule.getFactorSizes();
   if (failed(verifyShardingRuleMapping(
@@ -801,9 +794,11 @@ ArrayRef<AxisRefAttr>::iterator findManualAxisAfterFreeAxis(
 // 3. the number of global and local tensor inputs/outputs of the op region
 //    match,
 // 4. the manual axes come before any free axes in each dim sharding,
-// 5. the global shape and local shapes of the op regions arguments/results
+// 5. The manual axes cannot introduce padding. The dimension size must be
+//    divisible by the corresponding manual axes size.
+// 6. the global shape and local shapes of the op regions arguments/results
 //    match, and
-// 6. No manual axes are split.
+// 7. No manual axes are split.
 //
 // `valueKindStr` is a string included in any verification error message
 // specifying whether the values we are verifying are the operands or results.
@@ -862,8 +857,6 @@ LogicalResult verifyManualComputationValue(
       }
     }
 
-    // 5. Verify the global shape and local shapes of the op regions
-    //    arguments/results match.
     SmallVector<int64_t> newDimSizes;
     auto globalRankedType = mlir::cast<RankedTensorType>(globalType);
     for (auto [dimensionSize, dimSharding] : llvm::zip_equal(
@@ -871,13 +864,24 @@ LogicalResult verifyManualComputationValue(
       if (dimensionSize == ShapedType::kDynamic) {
         newDimSizes.push_back(ShapedType::kDynamic);
       } else {
+        // 5. The manual axes cannot introduce padding. The dimension size must
+        //    be divisible by the corresponding manual axes size.
+
         // Safe to call `getMesh` because the sharding was already verified.
-        newDimSizes.push_back(
-            dimensionSize /
+        int64_t manualAxesSize =
             accumulatedManualAxesSize(op, dimSharding.getAxes(), manualAxesSet,
-                                      sharding.getMesh(symbolTable)));
+                                      sharding.getMesh(symbolTable));
+        if (dimensionSize % manualAxesSize != 0) {
+          return op->emitOpError(valueKindStr)
+                 << " dimension size " << dimensionSize
+                 << " is not divisible by the manual axes size "
+                 << manualAxesSize;
+        }
+        newDimSizes.push_back(dimensionSize / manualAxesSize);
       }
     }
+    // 6. Verify the global shape and local shapes of the op regions
+    //    arguments/results match.
     auto expectedLocalRankedType =
         RankedTensorType::get(newDimSizes, globalRankedType.getElementType());
     auto localRankedType = mlir::cast<RankedTensorType>(localType);
@@ -889,7 +893,7 @@ LogicalResult verifyManualComputationValue(
              << ", actual local shape " << localRankedType;
     }
 
-    // 6. No manual axes are split.
+    // 7. No manual axes are split.
     if (sharding.anyOfAxisRef([&](AxisRefAttr axis) {
           return axis.getSubAxisInfo() &&
                  manualAxesSet.contains(axis.getName());
