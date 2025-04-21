@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
+#include <sstream>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -64,17 +66,46 @@ mlir::sdy::TensorShardingAttr createTensorSharding(
                                             replicatedAxes);
 }
 
-auto matmulFunc(mlir::Builder *builder, llvm::StringRef meshName) {
+auto mkTensor(mlir::ArrayRef<int64_t> shape, mlir::Type ty) {
+  auto tty = mlir::RankedTensorType::get(shape, ty);
+  auto size = tty.getNumElements();
+  std::vector<llvm::APFloat> buffer;
+  buffer.reserve(size);
+  std::fill(buffer.begin(), buffer.end(), llvm::APFloat(0.f));
+  return std::pair(tty, buffer);
+}
+
+auto matmulFunc(
+    mlir::Builder *builder, llvm::StringRef meshName,
+    std::array<std::pair<mlir::RankedTensorType, std::vector<llvm::APFloat>>, 2>
+        ins,
+    mlir::sdy::MeshAttr mesh) {
   auto ctx = builder->getContext();
   auto location = mkLoc(ctx, __LINE__);
   auto func_name = "matmul";
   auto sym_name = builder->getStringAttr(func_name);
   auto sym_attr = builder->getNamedAttr(llvm::StringRef("sym_name"), sym_name);
-  auto globalType = mlir::RankedTensorType::get({8, 4}, builder->getF16Type());
-  auto t1arg = createTensorSharding(builder, meshName, {});
-  auto type = builder->getFunctionType({globalType}, {});
-  auto arg_attrs = builder->getNamedAttr("arg_attrs", {t1arg});
-  auto attrs1 = {sym_attr, arg_attrs};
+  auto sharding = createTensorSharding(builder, meshName, {});
+  std::vector<mlir::Type> itypes;
+  itypes.reserve(ins.size());
+  std::vector<mlir::NamedAttribute> arg_attrs;
+  arg_attrs.reserve(ins.size());
+  auto i = 0;
+  for (auto [tty, ten] : ins) {
+    auto shardedTensor = sharding.getLocalTensorType(tty, mesh);
+    auto dea = mlir::DenseElementsAttr::get(shardedTensor, ten);
+    std::stringstream ss;
+    ss << "arg" << i;
+    auto nattr = builder->getNamedAttr(llvm::StringRef(ss.str()), dea);
+    itypes.push_back(shardedTensor);
+    arg_attrs.push_back(nattr);
+    i += 1;
+  }
+
+  auto dattr = builder->getDictionaryAttr(arg_attrs);
+  auto type = builder->getFunctionType(mlir::ArrayRef(itypes), {});
+  auto arg_dattrs = builder->getNamedAttr("arg_attrs", dattr);
+  auto attrs1 = {sym_attr, arg_dattrs};
   auto attrs = mlir::ArrayRef<mlir::NamedAttribute>(attrs1);
   auto funcOp = mlir::func::FuncOp::create(location, func_name, type, attrs);
   return funcOp;
@@ -97,7 +128,11 @@ int main(int argc, char **argv) {
   auto builder = mlir::OpBuilder(&ctx);
   auto moduleOp = mlir::ModuleOp::create(mkLoc(&ctx, __LINE__), "main");
   auto mesh = createMesh(&builder, meshName, devices);
-  moduleOp.getBody()->push_back(matmulFunc(&builder, meshName));
+  auto ty = builder.getBF16Type();
+  auto in1 = mkTensor({4, 8}, ty);
+  auto in2 = mkTensor({8, 12}, ty);
+  moduleOp.getBody()->push_back(
+      matmulFunc(&builder, meshName, {in1, in2}, mesh));
   opPrint(moduleOp);
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "SDY Builder", registry));
